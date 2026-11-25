@@ -1,0 +1,56 @@
+x-app: &app
+  image: map-service:local
+  build: .
+  env_file: .env
+
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      - POSTGRES_DB
+      - POSTGRES_USER
+      - POSTGRES_PASSWORD
+    volumes:
+      - db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", 'pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"']
+      interval: 3s
+      timeout: 3s
+      retries: 20
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+  mailpit:
+    image: axllent/mailpit:v1.22
+    ports:
+      - "127.0.0.1:8025:8025"
+  migrate:
+    <<: *app
+    command: python manage.py migrate --noinput
+    depends_on:
+      db:
+        condition: service_healthy
+  web:
+    <<: *app
+    ports:
+      - "127.0.0.1:8000:8000"
+    depends_on: &ready
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+  worker:
+    <<: *app
+    command: celery -A config worker -l INFO --concurrency=2
+    depends_on: *ready
+  beat:
+    <<: *app
+    command: celery -A config beat -l INFO -s /tmp/celerybeat-schedule
+    depends_on: *ready
+
+volumes:
+  db:
